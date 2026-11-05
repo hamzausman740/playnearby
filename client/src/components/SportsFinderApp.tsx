@@ -1,0 +1,587 @@
+import { useState, useEffect } from "react";
+import Sidebar from "./Sidebar";
+import TopBar from "./TopBar";
+import CardGrid from "./CardGrid";
+import AddModal from "./AddModal";
+import { socket } from "../socket/socket";
+import { Routes, Route, Navigate } from "react-router-dom";
+import TeamDetails from "./TeamDetails";
+import TeamChat from "./TeamChat";
+import OnMap from "./OnMap";
+import { useLocation } from "react-router-dom";
+
+import type {
+  Player,
+  Team,
+  Venue,
+  TabType,
+  SportFilter,
+  NewEntry,
+} from "../types";
+import { useAuth } from "../Auth/AuthProvider";
+
+type Props = {
+  noofuser: number;
+  onlineUsers: Set<string>;
+};
+
+// export const socket = io("http://localhost:5000");
+
+export default function SportsFinderApp({ noofuser, onlineUsers }: Props) {
+  const [activeTab, setActiveTab] = useState<TabType>("players");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedSport, setSelectedSport] = useState<SportFilter>("all");
+  const [selectedLocation, setSelectedLocation] = useState("all");
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const { setCurrentTeam } = useAuth();
+  
+  const { user } = useAuth();
+  const location = useLocation();
+  const [radius, setRadius] = useState<number>(5);
+
+  useEffect(() => {
+  if (location.pathname.includes("players")) {
+    setActiveTab("players");
+  } else if (location.pathname.includes("teams")) {
+    setActiveTab("teams");
+  } else if (location.pathname.includes("venues")) {
+    setActiveTab("venues");
+  }
+}, [location.pathname]);
+
+  const [players, setPlayers] = useState<Player[]>([
+    {
+      _id: "1",
+      name: "Rahul Sharma",
+      sport: "cricket",
+      area: "Sigra",
+      location: {
+        lat: 0,
+        lng: 0,
+      },
+      role: "Batsman",
+      available: "Weekends",
+      contact: "9876543210",
+      profileImage: "",
+      distanceKm: "",
+      currentTeam: null,
+    },
+    {
+      _id: "2",
+      name: "Amit Kumar",
+      sport: "football",
+      area: "Sigra",
+      location: {
+        lat: 0,
+        lng: 0,
+      },
+      role: "Striker",
+      available: "Evenings",
+      contact: "9876543211",
+      profileImage: "",
+      distanceKm: "",
+      currentTeam: null,
+    },
+  ]);
+
+  const [teams, setTeams] = useState<Team[]>([]);
+
+  const [venues, setVenues] = useState<Venue[]>([
+    {
+      _id: "1",
+      name: "Sigra Ground",
+      sport: "both",
+      location: {
+        lat: 1,
+        lng: 1,
+      },
+      area: "unknown",
+      type: "Open Ground",
+      availability: "Daily 6am-8pm",
+      contact: "Free to play",
+      profileImage: "",
+      distanceKm: "",
+      ratingCount: 0,
+      averageRating: 0,
+      images:[]
+    },
+  ]);
+
+  useEffect(() => {
+    socket.on("teams-updated", (teams) => {
+      setTeams(teams);
+    });
+
+    socket.on("team-error", (err) => {
+      alert(err.message);
+    });
+
+    return () => {
+      socket.off("teams-updated");
+      socket.off("team-error");
+    };
+  }, []);
+
+  const [newEntry, setNewEntry] = useState<NewEntry>({
+    name: "",
+    sport: "cricket",
+    location: {
+      lat: 0,
+      lng: 0,
+    },
+    area: "",
+    members: [],
+    createdBy: "",
+    status: "",
+    maxPlayers: 0,
+    type: "",
+  });
+
+  const filteredData = () => {
+    const data =
+      activeTab === "players"
+        ? players
+        : activeTab === "teams"
+          ? teams
+          : venues;
+
+    return data.filter((item) => {
+      const matchesSport =
+        selectedSport === "all" || item.sport.toLowerCase() === selectedSport;
+
+      const matchesLocation = selectedLocation === "all";
+
+      return matchesSport && matchesLocation;
+    });
+  };
+
+  const fetchNearbyVenues = async (radius: number) => {
+    if (!user?.location) return;
+    try {
+      const { lat, lng } = user.location;
+
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/venues/nearby?lat=${lat}&lng=${lng}&radius=${radius}`,
+        {
+          credentials: "include",
+        },
+      );
+
+      const data = await res.json();
+      console.log("venues are:", data);
+      setVenues(data.Venues);
+    } catch (err) {
+      console.log("error fetching", err);
+    }
+  };
+
+  const fetchNearbyPlayers = async (radius: number) => {
+    if (!user?.location) return;
+    try {
+      const { lat, lng } = user.location;
+
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/players/nearby?lat=${lat}&lng=${lng}&radius=${radius}`,
+        {
+          credentials: "include",
+        },
+      );
+
+      const data = await res.json();
+      console.log("players are:", data);
+      setPlayers(data.Players);
+    } catch (err) {
+      console.log("error fetching", err);
+    }
+  };
+
+  async function reverseGeocode(lat: number, lng: number): Promise<string> {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
+      {
+        headers: {
+          Referer: "http://localhost:5173/", // change in prod
+        },
+      },
+    );
+
+    if (!res.ok) throw new Error("Reverse geocode failed");
+
+    const data = await res.json();
+
+    return (
+      data.address?.suburb ||
+      data.address?.neighbourhood ||
+      data.address?.city ||
+      data.address?.town ||
+      data.address?.state ||
+      "Unknown area"
+    );
+  }
+
+  const handleAddEntry = async () => {
+    if (!newEntry.name || !newEntry.location) {
+      alert("Please fill required fields");
+      return;
+    }
+
+    let areaName = "";
+    try {
+      areaName = await reverseGeocode(
+        newEntry.location.lat,
+        newEntry.location.lng,
+      );
+    } catch {
+      areaName = "Unknown area";
+    }
+
+    newEntry.area = areaName;
+
+    console.log("the new team is ", newEntry);
+
+    const entry: Team = {
+      _id: "2",
+      name: newEntry.name,
+      sport: newEntry.sport,
+      area: newEntry.area,
+      location: {
+        lat: newEntry.location?.lat,
+        lng: newEntry.location?.lng,
+      },
+      members: newEntry.members,
+      createdBy: newEntry.createdBy,
+      status: newEntry.status,
+      maxPlayers: newEntry.maxPlayers,
+    };
+    console.log(entry);
+    socket.emit("ping-test", "this is data");
+    socket.emit("create-team", entry);
+
+    setNewEntry({
+      name: "",
+      sport: "",
+      location: {
+        lat: 0,
+        lng: 0,
+      },
+      area: "",
+      members: [],
+      createdBy: "",
+      status: "",
+      maxPlayers: 0,
+      type: "",
+    });
+
+    setShowAddModal(false);
+  };
+
+  const handleVenueAddEntry = async () => {
+    console.log("The new venue entry is ", newEntry);
+    let areaName = "";
+    try {
+      areaName = await reverseGeocode(
+        newEntry.location?.lat,
+        newEntry.location?.lng,
+      );
+    } catch {
+      areaName = "Unknown";
+    }
+    newEntry.area = areaName;
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/addvenue`, {
+        credentials: "include",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(newEntry),
+      });
+
+      if (!res.ok) throw new Error("Cant add Venue");
+    } catch (err) {
+      console.log("some error occurred while adding venue", err);
+    }
+    setShowAddModal(false);
+  };
+
+  useEffect(() => {
+    const fetchplayers = async () => {
+      if (!user?.city) return;
+      try {
+        console.log("in fetch player",user.city);
+        const res = await fetch(
+          `${import.meta.env.VITE_API_URL}/fetchallusers/${user.city}`,
+          {
+            credentials: "include",
+          },
+        );
+        const data = await res.json();
+        console.log("fetched players are:", data);
+        if (data) {
+          setPlayers(data.Users);
+        }
+      } catch (err) {
+        console.log("Cant fetch Players", err);
+      }
+    };
+    fetchplayers();
+  }, [user]);
+
+  useEffect(() => {
+    const fetchVenues = async () => {
+      try {
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/fetchallvenues`, {
+          credentials: "include",
+        });
+
+        if (!res.ok) {
+          throw new Error("Failed to fetch venues");
+        }
+
+        const data = await res.json();
+        console.log("fetched venues are:", data);
+
+        if (data?.Venues) {
+          setVenues(data.Venues);
+        }
+      } catch (err) {
+        console.log("Cant fetch Venues", err);
+      }
+    };
+
+    fetchVenues();
+  }, []);
+
+  useEffect(() => {
+    const fetchTeams = async () => {
+      try {
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/fetch-teams`, {
+          credentials: "include",
+        });
+
+        if (!res.ok) {
+          throw new Error("Failed to fetch teams");
+        }
+
+        const data = await res.json();
+        console.log("fetched teams are:", data);
+
+        if (data?.Teams) {
+          setTeams(data.Teams);
+        }
+      } catch (err) {
+        console.log("Cant fetch Teams", err);
+      }
+    };
+
+    fetchTeams();
+  }, []);
+
+  const jointeamhandler = (teamid: string) => {
+    socket.emit("join-team", teamid);
+    setCurrentTeam(teamid);
+  };
+
+  const exitteamhandler = (teamid: string) => {
+    socket.emit("exit-team", teamid);
+    setCurrentTeam(null);
+  };
+
+  useEffect(() => {
+    const onTeamId = (teamId: string) => {
+      console.log("in sportfinder component team is ", teamId);
+      setCurrentTeam(teamId);
+    };
+
+    const onTeamsUpdated = (teams: Team[]) => {
+      setTeams(teams);
+    };
+
+    const onTeamError = (err: { message: string }) => {
+      alert(err.message);
+      setCurrentTeam(null);
+    };
+
+    socket.on("get-team-id", onTeamId);
+    socket.on("teams-updated", onTeamsUpdated);
+    socket.on("team-error", onTeamError);
+
+    return () => {
+      socket.off("get-team-id", onTeamId);
+      socket.off("teams-updated", onTeamsUpdated);
+      socket.off("team-error", onTeamError);
+    };
+  }, []);
+
+
+  const updateVenueImages = (venueId: string, newImages: string[]) => {
+  setVenues(prev =>
+    prev.map(v =>
+      v._id === venueId ? { ...v, images: newImages } : v
+    )
+  );
+};
+
+
+
+
+  return (
+  
+      <div className=" bg-gray-900 flex overflow-hidden relative h-[calc(100vh-5rem)]">
+        {/* Backdrop for mobile drawer */}
+        {sidebarOpen && (
+          <div
+            className="md:hidden fixed inset-0 bg-black/60 z-30 transition-opacity backdrop-blur-sm"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
+        <Sidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          sidebarOpen={sidebarOpen}
+          setSidebarOpen={setSidebarOpen}
+          onAddClick={() => setShowAddModal(true)}
+        />
+
+        {/* Floating Menu Toggle Button for mobile when sidebar is closed */}
+        {!sidebarOpen && (
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="md:hidden fixed bottom-6 left-6 z-50 p-3.5 rounded-2xl bg-indigo-600 text-white shadow-lg hover:bg-indigo-500 transition-all border border-indigo-500/20 active:scale-95 flex items-center justify-center"
+            style={{ boxShadow: "0 8px 30px rgba(99, 102, 241, 0.4)" }}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="4" x2="20" y1="12" y2="12"></line><line x1="4" x2="20" y1="6" y2="6"></line><line x1="4" x2="20" y1="18" y2="18"></line></svg>
+          </button>
+        )}
+
+        <div className="flex-1 flex flex-col min-w-0 ">
+
+          <div className="flex-1 overflow-y-auto p-6 pt-0  ">
+          {(!location.pathname.includes("friends-chat") && !location.pathname.includes("chat"))&& (
+            <TopBar
+              activeTab={activeTab}
+              searchTerm={searchTerm}
+              setSearchTerm={setSearchTerm}
+              selectedSport={selectedSport}
+              setSelectedSport={setSelectedSport}
+              selectedLocation={selectedLocation}
+              setSelectedLocation={setSelectedLocation}
+              // filterdata={filteredData}
+              fetchNearbyVenues={fetchNearbyVenues}
+              fetchNearbyPlayers={fetchNearbyPlayers}
+              setRadius={setRadius}
+            />
+          )}
+            <Routes>
+              <Route path="/" element={<Navigate to="players" replace />} />
+
+              <Route path="players">
+                <Route
+                  index
+                  element={
+                    <CardGrid
+                      items={filteredData()}
+                      noofuser={noofuser}
+                      onlineUsers={onlineUsers}
+                      onAddClick={() => setShowAddModal(true)}
+                      type="player"
+                      jointeamhandler={jointeamhandler}
+                      exitteamhandler={exitteamhandler}
+                      updateVenueImages={updateVenueImages}
+                    />
+                  }
+                />
+                <Route
+                  path="map"
+                  element={
+                    <OnMap
+                      items={filteredData()}
+                      onlineUsers={onlineUsers}
+                      type={"player"}
+                      radius={radius}
+                    />
+                  }
+                />
+              </Route>
+              <Route path="teams">
+                <Route
+                  index
+                  element={
+                    <CardGrid
+                      items={filteredData()}
+                      noofuser={noofuser}
+                      onlineUsers={onlineUsers}
+                      onAddClick={() => setShowAddModal(true)}
+                      type="team"
+                      jointeamhandler={jointeamhandler}
+                      exitteamhandler={exitteamhandler}
+                      updateVenueImages={updateVenueImages}
+                    />
+                  }
+                />
+
+                <Route
+                  path="map"
+                  element={
+                    <OnMap
+                      items={filteredData()}
+                      onlineUsers={onlineUsers}
+                      type={"team"}
+                      radius={radius}
+                    />
+                  }
+                />
+                <Route path=":teamId">
+                  <Route index element={<TeamDetails teams={teams} />} />
+                  <Route path="chat" element={<TeamChat />} />
+                </Route>
+              </Route>
+
+              <Route path="venues">
+                <Route
+                  index
+                  element={
+                    <CardGrid
+                      items={filteredData()}
+                      noofuser={noofuser}
+                      onlineUsers={onlineUsers}
+                      onAddClick={() => setShowAddModal(true)}
+                      type="venue"
+                      jointeamhandler={jointeamhandler}
+                      exitteamhandler={exitteamhandler}
+                      updateVenueImages={updateVenueImages}
+                    />
+                  }
+                />
+                <Route
+                  path="map"
+                  element={
+                    <OnMap
+                      items={filteredData()}
+                      onlineUsers={onlineUsers}
+                      type={"venue"}
+                      radius={radius}
+                    />
+                  }
+                />
+              </Route>
+            </Routes>
+          </div>
+        </div>
+
+        {showAddModal && (
+          <AddModal
+          open={showAddModal}
+          onClose={() => setShowAddModal(false)}
+          newEntry={newEntry}
+          setNewEntry={setNewEntry}
+          onAdd={handleAddEntry}
+          onVenueAdd={handleVenueAddEntry}
+        />
+        )}
+      </div>
+  
+  );
+}

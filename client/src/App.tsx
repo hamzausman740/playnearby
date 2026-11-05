@@ -1,0 +1,274 @@
+
+
+import './App.css'
+import SportsFinderApp from './components/SportsFinderApp'
+import SetLocation from './components/SetLocation';
+
+import { useState,useEffect } from 'react';
+import {socket} from "./socket/socket"
+import Navbar from './components/Navbar';
+import {Routes,Route} from "react-router-dom"
+// import { Sign } from 'crypto';
+import Signup from "./components/Signup"
+import Login from './components/Login';
+import {  useAuth } from './Auth/AuthProvider';
+import ProtectedRoute from "./routes/ProtectedRoute"
+import 'leaflet/dist/leaflet.css';
+import Notifications from './components/Notifications';
+import PrivateChat from './components/PrivateChat';
+import Profile from './components/Profile';
+import { Toaster } from "@/components/ui/sonner";
+
+import { Dashboard } from './components/Dashboard';
+
+
+
+
+
+
+
+
+
+
+
+
+function App() {
+    const [noofusers,setNoofuser]=useState<number>(0);
+    const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
+
+    const {user,setUser,setCurrentTeam,currentTeam,setFriends,setFriendRequests,
+            setTeamInvites,loading,setLoading }=useAuth();
+
+
+
+        useEffect(() => {
+          console.log(`env is ${import.meta.env.VITE_API_URL}`)
+            const fetchUser = async () => {
+              try {
+                const res = await fetch(`${import.meta.env.VITE_API_URL}/authenticate`, {
+                  credentials: "include",
+                });
+
+                if (!res.ok) throw new Error("Not logged in");
+
+                const data = await res.json();
+                console.log("The data after fetching is :",data);
+                setUser({
+                  name:data.name,
+                  id:data._id,
+                  sport:data.sport,
+                  location:data.location,
+                  area:data.area,
+                  role:data.role,
+                  profileImage:data.profileImage,
+                  contact:data.contact,
+                  bio:data.bio,
+                  city:data.city,
+                  currentTeam:data.currentTeam,
+
+                });
+                console.log("current team is ",data.currentTeam);
+                setCurrentTeam(data.currentTeam);
+                // navigate("/mainpage");
+                
+              } catch {
+                setUser(null);
+              } finally {
+                setLoading(false);
+              }
+            };
+
+            fetchUser();
+          }, []);
+
+
+          useEffect(()=>{
+              const fetchfriends=async()=>{
+                try{
+                  const res=await fetch(`${import.meta.env.VITE_API_URL}/my-friends`,{
+                    credentials:"include"
+                  });
+                  
+                  const data=await res.json();
+                  console.log("friends are:",data);
+                  setFriends(data);
+                }catch(err){
+                  console.log("cant fetch friends",err)
+                }
+              }
+              fetchfriends();
+
+          },[]);
+
+
+
+    useEffect(() => {
+      console.log("in socket function...", user);
+      if (!user || !user.id) return;
+      const tempid=user.id;
+      console.log(tempid);
+      socket.auth = { user: {
+        name:user.name,
+        id:user.id,
+        location:user.location,
+        sport:user.sport
+      } };
+      socket.connect();
+
+      const onConnect = () => {
+        console.log("heelooo");
+        console.log("Connected from frontend....", socket.id);
+        socket.emit("user-online", user.id);
+      };
+
+      const onDisconnect = () => {
+        console.log("Disconnected");
+      };
+
+      const onOnlineUsers = (users: string[]) => {
+        const usersSet = new Set<string>(users);
+        setNoofuser(users.length);
+        setOnlineUsers(usersSet);
+        console.log("Number of online user:", users);
+      };
+
+      socket.on("connect", onConnect);
+      socket.on("disconnect", onDisconnect);
+      socket.on("online-users", onOnlineUsers);
+
+      return () => {
+        socket.off("connect", onConnect);
+        socket.off("disconnect", onDisconnect);
+        socket.off("online-users", onOnlineUsers);
+      };
+    }, [user]);
+
+
+
+  useEffect(() => {
+    const onUserJoined = (userId: string) => {
+      console.log("user joined with id", userId);
+    };
+
+    socket.on("user-joined-room", onUserJoined);
+
+    return () => {
+      socket.off("user-joined-room", onUserJoined);
+    };
+  }, [currentTeam]);
+
+  useEffect(()=>{
+    socket.on("receive-request",(senderid,friendshipid)=>{
+      const friendreq={
+        _id:friendshipid,
+        sender:senderid
+      }
+      console.log("friendreq is ",friendreq);
+      alert("Friend Request Received");
+      setFriendRequests(prev=> [...prev,friendreq])
+    })
+    return ()=> {socket.off("receive-request")};
+  },[])
+
+
+  
+
+
+  const logouthandler=async()=>{
+    try{
+      const res=await fetch(`${import.meta.env.VITE_API_URL}/auth/logout`,{
+         credentials: "include",
+            method:"POST",
+      });
+
+      if (!res.ok) {
+            throw new Error("Logout failed");
+          }
+
+
+      setUser("");
+      socket.disconnect();
+
+
+    }catch(err){
+      console.log("Cant logout",err);
+    }
+  }
+
+
+    useEffect(() => {
+      if (!currentTeam) return;
+      socket.emit("rejoin-team", currentTeam);
+    }, [currentTeam]);
+
+    useEffect(() => {
+      if (!user?.id) return;
+
+      socket.on("team-invite", (invite) => {
+        console.log("New Team Invite:", invite);
+        
+        setTeamInvites((prev) => [...prev, invite]);
+      });
+
+      return () => {
+        socket.off("team-invite");
+      };
+    }, [user]);
+
+    
+
+
+ 
+
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0f141b] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+          <p className="text-gray-500 text-sm font-medium">Loading Sports Connect...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className=" overflow-hidden">
+      {/* <Navbar loggedin={loggedin}/> */}
+      <Navbar
+              loggedin={!!user}
+              noofusers={noofusers}
+              logouthandler={logouthandler}
+              />
+      <Routes>
+          <Route path='/mainpage/*'
+            element={
+              <ProtectedRoute>
+                      <SportsFinderApp
+                        noofuser={noofusers}
+                        onlineUsers={onlineUsers}
+                      /> 
+              </ProtectedRoute>
+            }
+          />
+          <Route path='/set-location'
+            element={
+              <ProtectedRoute>
+                  <SetLocation/>
+              </ProtectedRoute>
+            }
+          />
+          
+          <Route path='/login' element={<Login/>}></Route>
+          <Route path='/signup' element={<Signup/>}></Route>
+          <Route path='/notifications' element={<Notifications/>}></Route>
+          <Route path='/private-chats' element={<PrivateChat onlineUsers={onlineUsers}/>}></Route>
+          <Route path='/profile' element={<Profile/>}></Route>
+          <Route path="/" element={<Dashboard/>}></Route>
+      </Routes>
+      <Toaster richColors position="top-right" />
+    </div>
+  )
+}
+
+export default App
